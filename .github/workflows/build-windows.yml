@@ -1,0 +1,85 @@
+name: Build Windows Mod
+
+on:
+  push:
+  pull_request:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            zig-version: 0.13.0
+            toolchain: cmake/zig-windows.cmake
+            staged-dir: q2e-weapon-recoil
+            package-basename: q2e-weapon-recoil-windows-x64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Sync and update submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth 1
+
+      - name: Verify source layout
+        run: |
+          test -d sdk/rerelease
+          test -d external/fmt
+          test -d external/jsoncpp
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ matrix.zig-version }}
+
+      - name: Ensure Ninja is available
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure CMake
+        run: cmake --fresh -B build -G Ninja --toolchain "${{ matrix.toolchain }}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Set package names
+        id: package
+        run: |
+          echo "artifact_name=${{ matrix.package-basename }}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "package_file=${{ matrix.package-basename }}-${{ github.event.release.tag_name }}.zip" >> "$GITHUB_OUTPUT"
+          else
+            echo "package_file=${{ matrix.package-basename }}.zip" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package staged mod
+        run: |
+          cp README.md "build/dist/${{ matrix.staged-dir }}/README.md"
+          cd build/dist
+          cmake -E tar cf "../${{ steps.package.outputs.package_file }}" --format=zip "${{ matrix.staged-dir }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: build/${{ steps.package.outputs.package_file }}
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/${{ steps.package.outputs.package_file }}

@@ -1,5 +1,5 @@
 {
-  description = "Q2E-Restore-Recoil – restore machinegun recoil in Quake II Enhanced";
+  description = "q2e-weapon-recoil - sharper, configurable full-arsenal recoil for Quake II Enhanced";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -7,18 +7,19 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
-      mingw = pkgs.pkgsCross.mingwW64;
     in {
       devShells.${system}.default = pkgs.mkShell {
         nativeBuildInputs = [
           pkgs.cmake
+          pkgs.git
           pkgs.ninja
-          mingw.stdenv.cc
+          pkgs.zig
         ];
 
         shellHook = ''
-          echo "Q2E-Restore-Recoil cross-compilation shell"
-          echo "Build: cmake -B build -G Ninja --toolchain cmake/mingw-w64.cmake && cmake --build build"
+          echo "q2e-weapon-recoil cross-compilation shell"
+          echo "Build: cmake --fresh -B build -G Ninja --toolchain cmake/zig-windows.cmake && cmake --build build"
+          echo "Staged mod: build/dist/q2e-weapon-recoil"
         '';
       };
     };
