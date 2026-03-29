@@ -1,0 +1,2 @@
+q2e-weapon-recoil
+Punchier recoil for Quake II rerelease, tuned weapon by weapon for a sharper arsenal.
