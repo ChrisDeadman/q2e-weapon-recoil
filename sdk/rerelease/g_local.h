@@ -1908,6 +1908,9 @@ extern cvar_t *run_roll;
 extern cvar_t *bob_up;
 extern cvar_t *bob_pitch;
 extern cvar_t *bob_roll;
+extern cvar_t *g_recoil_vertical;
+extern cvar_t *g_recoil_horizontal;
+extern cvar_t *g_recoil_return_time;
 
 extern cvar_t *sv_cheats;
 extern cvar_t *g_debug_monster_paths;
@@ -2344,6 +2347,8 @@ void fire_disintegrator(edict_t *self, const vec3_t &start, const vec3_t &dir, i
 vec3_t P_CurrentKickAngles(edict_t *ent);
 vec3_t P_CurrentKickOrigin(edict_t *ent);
 void P_AddWeaponKick(edict_t *ent, const vec3_t &origin, const vec3_t &angles);
+vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles);
+void P_ClearBulletWeaponKick(edict_t *ent);
 
 // we won't ever pierce more than this many entities for a single trace.
 constexpr size_t MAX_PIERCE = 16;
@@ -2872,7 +2877,6 @@ struct gclient_t
 		gtime_t	time, total;
 	} kick;
 	gtime_t		  quake_time;
-	vec3_t		  kick_origin;
 	float		  v_dmg_roll, v_dmg_pitch;
 	gtime_t		  v_dmg_time; // damage kicks
 	gtime_t		  fall_time;
@@ -2891,7 +2895,9 @@ struct gclient_t
 	water_level_t old_waterlevel;
 	int32_t		  breather_sound;
 
-	int32_t machinegun_shots; // for weapon raising
+	vec3_t	 machinegun_kick_angles;
+	vec3_t	 machinegun_release_angles;
+	vec3_t	 machinegun_kick_origin;
 
 	// animation vars
 	int32_t			anim_end;
@@ -3540,7 +3546,7 @@ struct fmt::formatter<edict_t>
 	}
 
     template<typename FormatContext>
-    auto format(const edict_t &p, FormatContext &ctx) -> decltype(ctx.out())
+    auto format(const edict_t &p, FormatContext &ctx) const -> decltype(ctx.out())
     {
 		if (p.linked)
 			return fmt::format_to(ctx.out(), FMT_STRING("{} @ {}"), p.classname, (p.absmax + p.absmin) * 0.5f);

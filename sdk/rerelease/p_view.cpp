@@ -36,6 +36,50 @@ inline bool SkipViewModifiers() {
 	return false;
 }
 
+inline void P_UpdateMachinegunKick(edict_t *ent)
+{
+	if (!ent->client->machinegun_kick_angles && !ent->client->machinegun_release_angles && !ent->client->machinegun_kick_origin)
+		return;
+
+	bool firing_bullet_recoil_weapon = false;
+	if (ent->client->pers.weapon)
+	{
+		if (ent->client->pers.weapon->id == IT_WEAPON_MACHINEGUN)
+		{
+			firing_bullet_recoil_weapon = (ent->client->buttons & BUTTON_ATTACK) && ent->client->pers.inventory[ent->client->pers.weapon->ammo] > 0;
+		}
+		else if (ent->client->pers.weapon->id == IT_WEAPON_CHAINGUN)
+		{
+			firing_bullet_recoil_weapon = ent->client->ps.gunframe >= 5 && ent->client->ps.gunframe <= 21 &&
+				ent->client->pers.inventory[ent->client->pers.weapon->ammo] > 0;
+		}
+	}
+
+	float machinegun_return_time = max(g_recoil_return_time->value, 0.f);
+	if (!firing_bullet_recoil_weapon && machinegun_return_time == 0.f)
+	{
+		P_ClearBulletWeaponKick(ent);
+		return;
+	}
+
+	if (!firing_bullet_recoil_weapon)
+	{
+		ent->client->machinegun_kick_angles = {};
+
+		float blend = gi.frame_time_s / max(machinegun_return_time, 0.01f);
+		blend = clamp(blend, 0.f, 1.f);
+		ent->client->machinegun_release_angles *= (1.f - blend);
+		ent->client->machinegun_kick_origin *= (1.f - blend);
+	}
+
+	if (ent->client->machinegun_kick_angles.lengthSquared() < 0.0001f)
+		ent->client->machinegun_kick_angles = {};
+	if (ent->client->machinegun_release_angles.lengthSquared() < 0.0001f)
+		ent->client->machinegun_release_angles = {};
+	if (ent->client->machinegun_kick_origin.lengthSquared() < 0.0001f)
+		ent->client->machinegun_kick_origin = {};
+}
+
 /*
 ===============
 SV_CalcRoll
@@ -409,6 +453,13 @@ void SV_CalcViewOffset(edict_t *ent)
 	for (int i = 0; i < 3; i++)
 		angles[i] = clamp(angles[i], -31.f, 31.f);
 
+	if (ent->client->machinegun_release_angles)
+	{
+		angles += ent->client->machinegun_release_angles;
+		for (int i = 0; i < 3; i++)
+			angles[i] = clamp(angles[i], -31.f, 31.f);
+	}
+
 	//===================================
 
 	// base origin
@@ -449,7 +500,7 @@ void SV_CalcViewOffset(edict_t *ent)
 	// add kick offset
 
 	if (!ent->client->pers.bob_skip && !SkipViewModifiers())
-		v += P_CurrentKickOrigin(ent);
+		v += P_CurrentKickOrigin(ent) + ent->client->machinegun_kick_origin;
 
 	// absolutely bound offsets
 	// so the view can never be outside the player box
@@ -1452,6 +1503,8 @@ void ClientEndServerFrame(edict_t *ent)
 	bobcycle = (int) bobtime;
 	bobcycle_run = (int) bobtime_run;
 	bobfracsin = fabsf(sinf(bobtime * PIf));
+
+	P_UpdateMachinegunKick(ent);
 
 	// apply all the damage taken this frame
 	P_DamageFeedback(ent);

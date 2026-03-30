@@ -874,7 +874,9 @@ SAVE_STRUCT_START
 	FIELD_AUTO(old_waterlevel),
 	FIELD_AUTO(breather_sound),
 	
-	FIELD_AUTO(machinegun_shots),
+	FIELD_AUTO(machinegun_kick_angles),
+	FIELD_AUTO(machinegun_release_angles),
+	FIELD_AUTO(machinegun_kick_origin),
 	
 	FIELD_AUTO(anim_end),
 	FIELD_AUTO(anim_priority),

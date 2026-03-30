@@ -88,6 +88,84 @@ void P_AddWeaponKick(edict_t *ent, const vec3_t &origin, const vec3_t &angles)
 	ent->client->kick.time = level.time + ent->client->kick.total;
 }
 
+static float P_SignedAngle(float angle)
+{
+	angle = anglemod(angle);
+	if (angle > 180.f)
+		angle -= 360.f;
+	return angle;
+}
+
+struct bullet_weapon_recoil_t
+{
+	float recoil_scale;
+	float yaw_release_scale;
+	float pitch_release_scale;
+	float pitch_sign;
+};
+
+static bullet_weapon_recoil_t P_GetBulletWeaponRecoil(edict_t *ent, float recoil_scale)
+{
+	bullet_weapon_recoil_t recoil = { recoil_scale, 1.5f, 3.0f, -1.0f };
+
+	if (ent->client->pers.weapon && ent->client->pers.weapon->id == IT_WEAPON_CHAINGUN)
+		recoil.pitch_sign = 1.0f;
+
+	return recoil;
+}
+
+static vec3_t P_BuildBulletWeaponRecoilDelta(const bullet_weapon_recoil_t &recoil, int shot_increment)
+{
+	vec3_t shot_recoil_delta = {};
+	shot_recoil_delta[YAW] = crandom() * g_recoil_horizontal->value * recoil.recoil_scale;
+	shot_recoil_delta[PITCH] = recoil.pitch_sign * g_recoil_vertical->value * recoil.recoil_scale * shot_increment;
+	return shot_recoil_delta;
+}
+
+static vec3_t P_BuildBulletWeaponReleaseDelta(const vec3_t &shot_recoil_delta, const bullet_weapon_recoil_t &recoil, int shot_increment)
+{
+	vec3_t release_delta = shot_recoil_delta;
+	if (recoil.recoil_scale > 0.f)
+		release_delta[YAW] *= recoil.yaw_release_scale / recoil.recoil_scale;
+	if (recoil.recoil_scale > 0.f && shot_increment > 0)
+		release_delta[PITCH] *= recoil.pitch_release_scale / (recoil.recoil_scale * shot_increment);
+	return release_delta;
+}
+
+vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles)
+{
+	vec3_t applied_delta = {};
+
+	if (!ent->client)
+		return applied_delta;
+
+	float old_pitch = P_SignedAngle(ent->client->v_angle[PITCH]);
+	float new_pitch = clamp(old_pitch + delta_angles[PITCH], -89.f, 89.f);
+	applied_delta[PITCH] = new_pitch - old_pitch;
+	applied_delta[YAW] = delta_angles[YAW];
+
+	ent->client->ps.pmove.delta_angles[PITCH] += applied_delta[PITCH];
+	ent->client->ps.pmove.delta_angles[YAW] += applied_delta[YAW];
+
+	ent->client->v_angle[PITCH] = anglemod(new_pitch);
+	ent->client->v_angle[YAW] = anglemod(ent->client->v_angle[YAW] + applied_delta[YAW]);
+	ent->client->ps.viewangles[PITCH] = ent->client->v_angle[PITCH];
+	ent->client->ps.viewangles[YAW] = ent->client->v_angle[YAW];
+	AngleVectors(ent->client->v_angle, ent->client->v_forward, nullptr, nullptr);
+
+	return applied_delta;
+}
+
+void P_ClearBulletWeaponKick(edict_t *ent)
+{
+	if (!ent->client)
+		return;
+
+	ent->client->machinegun_kick_angles = {};
+	ent->client->machinegun_release_angles = {};
+	ent->client->machinegun_kick_origin = {};
+}
+
 void P_ProjectSource(edict_t *ent, const vec3_t &angles, vec3_t distance, vec3_t &result_start, vec3_t &result_dir)
 {
 	if (ent->client->pers.hand == LEFT_HANDED)
@@ -337,7 +415,7 @@ void ChangeWeapon(edict_t *ent)
 
 	ent->client->pers.weapon = ent->client->newweapon;
 	ent->client->newweapon = nullptr;
-	ent->client->machinegun_shots = 0;
+	P_ClearBulletWeaponKick(ent);
 
 	// set visible model
 	if (ent->s.modelindex == MODELINDEX_PLAYER)
@@ -1456,15 +1534,30 @@ MACHINEGUN / CHAINGUN
 ======================================================================
 */
 
+static vec3_t P_ApplyBulletWeaponRecoil(edict_t *ent, float recoil_scale, int shot_increment)
+{
+	vec3_t shot_kick_origin = {};
+	bullet_weapon_recoil_t recoil = P_GetBulletWeaponRecoil(ent, recoil_scale);
+	vec3_t shot_recoil_delta = P_BuildBulletWeaponRecoilDelta(recoil, shot_increment);
+
+	for (int i = 1; i < 3; i++)
+		shot_kick_origin[i] = crandom() * 0.35f * recoil_scale;
+	shot_kick_origin[0] = crandom() * 0.35f * recoil_scale;
+
+	vec3_t applied_recoil_delta = P_ApplyBulletWeaponAimDelta(ent, shot_recoil_delta);
+	ent->client->machinegun_kick_angles += applied_recoil_delta;
+	ent->client->machinegun_release_angles = P_BuildBulletWeaponReleaseDelta(shot_recoil_delta, recoil, shot_increment);
+	ent->client->machinegun_kick_origin = shot_kick_origin;
+	return ent->client->v_angle;
+}
+
 void Machinegun_Fire(edict_t *ent)
 {
-	int i;
 	int damage = 8;
 	int kick = 2;
 
 	if (!(ent->client->buttons & BUTTON_ATTACK))
 	{
-		ent->client->machinegun_shots = 0;
 		ent->client->ps.gunframe = 6;
 		return;
 	}
@@ -1487,29 +1580,12 @@ void Machinegun_Fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 
-	vec3_t kick_origin {}, kick_angles {};
-	for (i = 0; i < 3; i++)
-	{
-		kick_origin[i] = crandom() * 0.35f;
-		kick_angles[i] = crandom() * 0.7f;
-	}
-	//kick_angles[0] = ent->client->machinegun_shots * -1.5f;
-	P_AddWeaponKick(ent, kick_origin, kick_angles);
-
-	// raise the gun as it is firing
-	// [Paril-KEX] disabled as this is a bit hard to do with high
-	// tickrate, but it also just sucks in general.
-	/*if (!deathmatch->integer)
-	{
-		ent->client->machinegun_shots++;
-		if (ent->client->machinegun_shots > 9)
-			ent->client->machinegun_shots = 9;
-	}*/
+	vec3_t shot_angles = P_ApplyBulletWeaponRecoil(ent, 1.0f, 1);
 
 	// get start / end positions
 	vec3_t start, dir;
-	// Paril: kill sideways angle on hitscan
-	P_ProjectSource(ent, ent->client->v_angle, { 0, 0, -8 }, start, dir);
+	// Machinegun recoil affects the actual firing angles, like original Quake II.
+	P_ProjectSource(ent, shot_angles, { 0, 0, -8 }, start, dir);
 	G_LagCompensate(ent, start, dir);
 	fire_bullet(ent, start, dir, damage, kick, DEFAULT_BULLET_HSPREAD, DEFAULT_BULLET_VSPREAD, MOD_MACHINEGUN);
 	G_UnLagCompensate();
@@ -1629,16 +1705,10 @@ void Chaingun_Fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 
-	vec3_t kick_origin {}, kick_angles {};
-	for (i = 0; i < 3; i++)
-	{
-		kick_origin[i] = crandom() * 0.35f;
-		kick_angles[i] = crandom() * (0.5f + (shots * 0.15f));
-	}
-	P_AddWeaponKick(ent, kick_origin, kick_angles);
+	vec3_t shot_angles = P_ApplyBulletWeaponRecoil(ent, 0.5f, shots);
 
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, { 0, 0, -8 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 0, 0, -8 }, start, dir);
 
 	G_LagCompensate(ent, start, dir);
 	for (i = 0; i < shots; i++)
@@ -1647,7 +1717,7 @@ void Chaingun_Fire(edict_t *ent)
 		// Paril: kill sideways angle on hitscan
 		r = crandom() * 4;
 		u = crandom() * 4;
-		P_ProjectSource(ent, ent->client->v_angle, { 0, r, u + -8 }, start, dir);
+		P_ProjectSource(ent, shot_angles, { 0, r, u + -8 }, start, dir);
 
 		fire_bullet(ent, start, dir, damage, kick, DEFAULT_BULLET_HSPREAD, DEFAULT_BULLET_VSPREAD, MOD_CHAINGUN);
 	}

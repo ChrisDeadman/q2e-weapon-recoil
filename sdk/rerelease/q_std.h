@@ -110,6 +110,8 @@ using byte = uint8_t;
 using std::max;
 using std::min;
 using std::clamp;
+using std::isinf;
+using std::isnan;
 
 template<typename T>
 constexpr T lerp(T from, T to, float t)
