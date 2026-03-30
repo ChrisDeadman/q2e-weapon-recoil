@@ -11,7 +11,7 @@ Punchier, configurable weapon recoil for Quake II rerelease that makes the whole
 
 ## How to Install
 
-1. Download the latest release zip from [the latest release page](/ChrisDeadman/q2e-weapon-recoil/releases/latest), or build the mod yourself and use the files from `build/dist/q2e-weapon-recoil/`.
+1. Download the latest release zip from [the latest release page](https://github.com/ChrisDeadman/q2e-weapon-recoil/releases), or build the mod yourself and use the files from `build/dist/q2e-weapon-recoil/`.
 2. Extract or copy the `q2e-weapon-recoil` folder so it contains `game_x64.dll` and `description.txt`.
 3. Place that folder in `%USERPROFILE%\\Saved Games\\Nightdive Studios\\Quake II\\`.
 4. Launch the game with `+set game q2e-weapon-recoil`.
