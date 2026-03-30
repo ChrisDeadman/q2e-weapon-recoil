@@ -21,13 +21,12 @@ void weapon_ionripper_fire(edict_t *ent)
 	if (is_quad)
 		damage *= damage_multiplier;
 
-	tempang = ent->client->v_angle;
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
+	tempang = shot_angles;
 	tempang[YAW] += crandom();
 
 	vec3_t start, dir;
 	P_ProjectSource(ent, tempang, { 16, 7, -8 }, start, dir);
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -3, { -3.f, 0.f, 0.f });
 
 	fire_ionripper(ent, start, dir, damage, 500, EF_IONRIPPER);
 
@@ -75,9 +74,10 @@ void weapon_phalanx_fire(edict_t *ent)
 
 	if (ent->client->ps.gunframe == 8)
 	{
-		v[PITCH] = ent->client->v_angle[PITCH];
-		v[YAW] = ent->client->v_angle[YAW] - 1.5f;
-		v[ROLL] = ent->client->v_angle[ROLL];
+		vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
+		v[PITCH] = shot_angles[PITCH];
+		v[YAW] = shot_angles[YAW] - 1.5f;
+		v[ROLL] = shot_angles[ROLL];
 
 		vec3_t start;
 		P_ProjectSource(ent, v, { 0, 8, -8 }, start, dir);
@@ -97,9 +97,10 @@ void weapon_phalanx_fire(edict_t *ent)
 	}
 	else
 	{
-		v[PITCH] = ent->client->v_angle[PITCH];
-		v[YAW] = ent->client->v_angle[YAW] + 1.5f;
-		v[ROLL] = ent->client->v_angle[ROLL];
+		vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
+		v[PITCH] = shot_angles[PITCH];
+		v[YAW] = shot_angles[YAW] + 1.5f;
+		v[ROLL] = shot_angles[ROLL];
 
 		vec3_t start;
 		P_ProjectSource(ent, v, { 0, 8, -8 }, start, dir);
@@ -115,7 +116,6 @@ void weapon_phalanx_fire(edict_t *ent)
 		PlayerNoise(ent, start, PNOISE_WEAPON);
 	}
 
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -2.f, 0.f, 0.f });
 }
 
 void Weapon_Phalanx(edict_t *ent)
@@ -142,10 +142,11 @@ void weapon_trap_fire(edict_t *ent, bool held)
 {
 	int	  speed;
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on grenades
 	// limit upwards angle so you don't throw behind you
-	P_ProjectSource(ent, { max(-62.5f, ent->client->v_angle[0]), ent->client->v_angle[1], ent->client->v_angle[2] }, { 8, 0, -8 }, start, dir);
+	P_ProjectSource(ent, { max(-62.5f, shot_angles[0]), shot_angles[1], shot_angles[2] }, { 8, 0, -8 }, start, dir);
 
 	gtime_t timer = ent->client->grenade_time - level.time;
 	speed = (int) (ent->health <= 0 ? TRAP_MINSPEED : min(TRAP_MINSPEED + (TRAP_TIMER - timer).seconds() * ((TRAP_MAXSPEED - TRAP_MINSPEED) / TRAP_TIMER.seconds()), TRAP_MAXSPEED));

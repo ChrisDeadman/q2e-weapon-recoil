@@ -1908,9 +1908,7 @@ extern cvar_t *run_roll;
 extern cvar_t *bob_up;
 extern cvar_t *bob_pitch;
 extern cvar_t *bob_roll;
-extern cvar_t *g_recoil_vertical;
-extern cvar_t *g_recoil_horizontal;
-extern cvar_t *g_recoil_return_time;
+extern cvar_t *g_recoil_time;
 
 extern cvar_t *sv_cheats;
 extern cvar_t *g_debug_monster_paths;
@@ -2346,9 +2344,9 @@ void fire_trap(edict_t *self, const vec3_t &start, const vec3_t &aimdir, int spe
 void fire_disintegrator(edict_t *self, const vec3_t &start, const vec3_t &dir, int speed);
 vec3_t P_CurrentKickAngles(edict_t *ent);
 vec3_t P_CurrentKickOrigin(edict_t *ent);
-void P_AddWeaponKick(edict_t *ent, const vec3_t &origin, const vec3_t &angles);
 vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles);
-void P_ClearBulletWeaponKick(edict_t *ent);
+vec3_t P_ApplyWeaponRecoil(edict_t *ent, int shot_increment = 1);
+void P_ClearWeaponRecoil(edict_t *ent);
 
 // we won't ever pierce more than this many entities for a single trace.
 constexpr size_t MAX_PIERCE = 16;
@@ -2895,9 +2893,10 @@ struct gclient_t
 	water_level_t old_waterlevel;
 	int32_t		  breather_sound;
 
-	vec3_t	 machinegun_kick_angles;
-	vec3_t	 machinegun_release_angles;
-	vec3_t	 machinegun_kick_origin;
+	vec3_t	 weapon_kick_angles;
+	vec3_t	 weapon_release_angles;
+	vec3_t	 weapon_kick_origin;
+	gtime_t	 weapon_recoil_time;
 
 	// animation vars
 	int32_t			anim_end;

@@ -80,14 +80,6 @@ vec3_t P_CurrentKickOrigin(edict_t *ent)
 	return ent->client->kick.origin * P_CurrentKickFactor(ent);
 }
 
-void P_AddWeaponKick(edict_t *ent, const vec3_t &origin, const vec3_t &angles)
-{
-	ent->client->kick.origin = origin;
-	ent->client->kick.angles = angles;
-	ent->client->kick.total = 200_ms;
-	ent->client->kick.time = level.time + ent->client->kick.total;
-}
-
 static float P_SignedAngle(float angle)
 {
 	angle = anglemod(angle);
@@ -96,39 +88,216 @@ static float P_SignedAngle(float angle)
 	return angle;
 }
 
-struct bullet_weapon_recoil_t
+namespace
+{
+constexpr float WEAPON_RECOIL_VERTICAL = 1.5f;
+constexpr float WEAPON_RECOIL_HORIZONTAL = 0.7f;
+constexpr float WEAPON_RECOIL_YAW_RELEASE_SCALE = 1.5f;
+constexpr float WEAPON_RECOIL_PITCH_RELEASE_SCALE = 3.0f;
+
+std::array<cvar_t *, IT_TOTAL> weapon_recoil_scale_cvars = {};
+}
+
+static gtime_t P_GetWeaponRecoilTime()
+{
+	return gtime_t::from_sec(max(g_recoil_time ? g_recoil_time->value : 0.1f, 0.f));
+}
+
+struct weapon_recoil_t
 {
 	float recoil_scale;
-	float yaw_release_scale;
-	float pitch_release_scale;
+	float release_scale;
 	float pitch_sign;
 };
 
-static bullet_weapon_recoil_t P_GetBulletWeaponRecoil(edict_t *ent, float recoil_scale)
+struct weapon_recoil_id_default_t
 {
-	bullet_weapon_recoil_t recoil = { recoil_scale, 1.5f, 3.0f, -1.0f };
+	item_id_t id;
+	weapon_recoil_t recoil;
+};
 
-	if (ent->client->pers.weapon && ent->client->pers.weapon->id == IT_WEAPON_CHAINGUN)
-		recoil.pitch_sign = 1.0f;
+struct weapon_recoil_name_default_t
+{
+	const char *pattern;
+	weapon_recoil_t recoil;
+};
 
+static constexpr weapon_recoil_id_default_t weapon_recoil_id_defaults[] = {
+	{ IT_WEAPON_GRAPPLE, { 0.0f, 0.0f, -1.0f } },
+	{ IT_WEAPON_BLASTER, { 0.6f, 0.6f, -1.0f } },
+	{ IT_WEAPON_CHAINFIST, { 0.6f, 0.9f, 1.0f } },
+	{ IT_WEAPON_SHOTGUN, { 1.8f, 1.8f, -1.0f } },
+	{ IT_WEAPON_SSHOTGUN, { 2.4f, 2.4f, -1.0f } },
+	{ IT_WEAPON_MACHINEGUN, { 1.0f, 1.0f, -1.0f } },
+	{ IT_WEAPON_CHAINGUN, { 0.5f, 1.0f, 1.0f } },
+	{ IT_WEAPON_ETF_RIFLE, { 1.2f, 1.2f, -1.0f } },
+	{ IT_AMMO_GRENADES, { 1.6f, 1.6f, -1.0f } },
+	{ IT_WEAPON_GLAUNCHER, { 2.1f, 2.1f, -1.0f } },
+	{ IT_WEAPON_RLAUNCHER, { 2.5f, 2.5f, -1.0f } },
+	{ IT_WEAPON_PROXLAUNCHER, { 2.1f, 2.1f, -1.0f } },
+	{ IT_WEAPON_HYPERBLASTER, { 0.55f, 0.55f, -1.0f } },
+	{ IT_WEAPON_IONRIPPER, { 1.4f, 1.4f, -1.0f } },
+	{ IT_WEAPON_PLASMABEAM, { 0.35f, 0.35f, -1.0f } },
+	{ IT_WEAPON_RAILGUN, { 2.8f, 2.8f, -1.0f } },
+	{ IT_WEAPON_PHALANX, { 2.2f, 2.2f, -1.0f } },
+	{ IT_WEAPON_BFG, { 8.0f, 8.0f, -1.0f } },
+	{ IT_WEAPON_DISRUPTOR, { 1.9f, 1.9f, -1.0f } },
+	{ IT_AMMO_TESLA, { 0.8f, 0.8f, -1.0f } },
+	{ IT_AMMO_TRAP, { 0.8f, 0.8f, -1.0f } },
+};
+
+static constexpr weapon_recoil_name_default_t weapon_recoil_name_defaults[] = {
+	{ "grapple", { 0.0f, 0.0f, -1.0f } },
+	{ "chainfist", { 0.6f, 0.9f, 1.0f } },
+	{ "chainsaw", { 0.6f, 0.9f, 1.0f } },
+	{ "chaingun", { 0.5f, 1.0f, 1.0f } },
+	{ "supershotgun", { 2.4f, 2.4f, -1.0f } },
+	{ "shotgun", { 1.8f, 1.8f, -1.0f } },
+	{ "bfg", { 8.0f, 8.0f, -1.0f } },
+	{ "rail", { 2.8f, 2.8f, -1.0f } },
+	{ "rocket", { 2.5f, 2.5f, -1.0f } },
+	{ "grenade", { 2.1f, 2.1f, -1.0f } },
+	{ "prox", { 2.1f, 2.1f, -1.0f } },
+	{ "phalanx", { 2.2f, 2.2f, -1.0f } },
+	{ "disruptor", { 1.9f, 1.9f, -1.0f } },
+	{ "tracker", { 1.9f, 1.9f, -1.0f } },
+	{ "disintegrator", { 1.9f, 1.9f, -1.0f } },
+	{ "ionripper", { 1.4f, 1.4f, -1.0f } },
+	{ "ripper", { 1.4f, 1.4f, -1.0f } },
+	{ "plasmabeam", { 0.35f, 0.35f, -1.0f } },
+	{ "heatbeam", { 0.35f, 0.35f, -1.0f } },
+	{ "beam", { 0.35f, 0.35f, -1.0f } },
+	{ "hyperblaster", { 0.55f, 0.55f, -1.0f } },
+	{ "blaster", { 0.6f, 0.6f, -1.0f } },
+	{ "etf", { 1.2f, 1.2f, -1.0f } },
+	{ "flechette", { 1.2f, 1.2f, -1.0f } },
+	{ "tesla", { 0.8f, 0.8f, -1.0f } },
+	{ "trap", { 0.8f, 0.8f, -1.0f } },
+};
+
+static std::string P_GetWeaponRecoilSuffix(const gitem_t *weapon)
+{
+	const char *source = "weapon";
+	if (weapon)
+	{
+		if (weapon->classname)
+			source = weapon->classname;
+		else if (weapon->pickup_name)
+			source = weapon->pickup_name;
+	}
+
+	std::string suffix = source;
+	for (const char *prefix : { "weapon_", "ammo_", "item_" })
+	{
+		if (suffix.rfind(prefix, 0) == 0)
+		{
+			suffix.erase(0, strlen(prefix));
+			break;
+		}
+	}
+
+	std::string sanitized;
+	sanitized.reserve(suffix.size());
+	bool pending_separator = false;
+	for (char ch : suffix)
+	{
+		bool is_alpha = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+		bool is_digit = ch >= '0' && ch <= '9';
+		if (is_alpha || is_digit)
+		{
+			if (pending_separator && !sanitized.empty())
+				sanitized.push_back('_');
+			pending_separator = false;
+			if (ch >= 'A' && ch <= 'Z')
+				ch = (char) (ch - 'A' + 'a');
+			sanitized.push_back(ch);
+		}
+		else
+		{
+			pending_separator = !sanitized.empty();
+		}
+	}
+
+	if (sanitized.empty())
+		return "weapon";
+
+	return sanitized;
+}
+
+static weapon_recoil_t P_GetFallbackWeaponRecoil(const std::string &suffix)
+{
+	for (const auto &entry : weapon_recoil_name_defaults)
+	{
+		if (suffix.find(entry.pattern) != std::string::npos)
+			return entry.recoil;
+	}
+
+	return { 1.0f, 1.0f, -1.0f };
+}
+
+static weapon_recoil_t P_GetWeaponRecoilDefaults(const gitem_t *weapon)
+{
+	if (!weapon)
+		return { 1.0f, 1.0f, -1.0f };
+
+	for (const auto &entry : weapon_recoil_id_defaults)
+	{
+		if (weapon->id == entry.id)
+			return entry.recoil;
+	}
+
+	return P_GetFallbackWeaponRecoil(P_GetWeaponRecoilSuffix(weapon));
+}
+
+static cvar_t *P_GetWeaponRecoilScaleCvar(const gitem_t *weapon, float default_scale)
+{
+	if (!weapon)
+		return nullptr;
+
+	if (weapon->id > IT_NULL && weapon->id < IT_TOTAL && weapon_recoil_scale_cvars[weapon->id])
+		return weapon_recoil_scale_cvars[weapon->id];
+
+	std::string cvar_name(G_Fmt("g_recoil_{}", P_GetWeaponRecoilSuffix(weapon)));
+	cvar_t *cvar = gi.cvar(cvar_name.c_str(), G_Fmt("{}", default_scale).data(), CVAR_ARCHIVE);
+
+	if (weapon->id > IT_NULL && weapon->id < IT_TOTAL)
+		weapon_recoil_scale_cvars[weapon->id] = cvar;
+
+	return cvar;
+}
+
+static weapon_recoil_t P_GetWeaponRecoil(edict_t *ent)
+{
+	weapon_recoil_t recoil = P_GetWeaponRecoilDefaults(ent && ent->client ? ent->client->pers.weapon : nullptr);
+	cvar_t *cvar = P_GetWeaponRecoilScaleCvar(ent && ent->client ? ent->client->pers.weapon : nullptr, recoil.recoil_scale);
+	if (!cvar)
+		return recoil;
+
+	float configured_scale = max(cvar->value, 0.f);
+	if (recoil.recoil_scale > 0.f)
+		recoil.release_scale *= configured_scale / recoil.recoil_scale;
+	else
+		recoil.release_scale = configured_scale;
+
+	recoil.recoil_scale = configured_scale;
 	return recoil;
 }
 
-static vec3_t P_BuildBulletWeaponRecoilDelta(const bullet_weapon_recoil_t &recoil, int shot_increment)
+static vec3_t P_BuildWeaponRecoilDelta(const weapon_recoil_t &recoil, int shot_increment)
 {
 	vec3_t shot_recoil_delta = {};
-	shot_recoil_delta[YAW] = crandom() * g_recoil_horizontal->value * recoil.recoil_scale;
-	shot_recoil_delta[PITCH] = recoil.pitch_sign * g_recoil_vertical->value * recoil.recoil_scale * shot_increment;
+	shot_recoil_delta[YAW] = crandom() * WEAPON_RECOIL_HORIZONTAL * recoil.recoil_scale;
+	shot_recoil_delta[PITCH] = recoil.pitch_sign * WEAPON_RECOIL_VERTICAL * recoil.recoil_scale * max(shot_increment, 1);
 	return shot_recoil_delta;
 }
 
-static vec3_t P_BuildBulletWeaponReleaseDelta(const vec3_t &shot_recoil_delta, const bullet_weapon_recoil_t &recoil, int shot_increment)
+static vec3_t P_BuildWeaponReleaseDelta(const vec3_t &shot_recoil_delta, const weapon_recoil_t &recoil, int shot_increment)
 {
 	vec3_t release_delta = shot_recoil_delta;
 	if (recoil.recoil_scale > 0.f)
-		release_delta[YAW] *= recoil.yaw_release_scale / recoil.recoil_scale;
+		release_delta[YAW] *= (WEAPON_RECOIL_YAW_RELEASE_SCALE * recoil.release_scale) / recoil.recoil_scale;
 	if (recoil.recoil_scale > 0.f && shot_increment > 0)
-		release_delta[PITCH] *= recoil.pitch_release_scale / (recoil.recoil_scale * shot_increment);
+		release_delta[PITCH] *= (WEAPON_RECOIL_PITCH_RELEASE_SCALE * recoil.release_scale) / (recoil.recoil_scale * shot_increment);
 	return release_delta;
 }
 
@@ -156,14 +325,15 @@ vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles)
 	return applied_delta;
 }
 
-void P_ClearBulletWeaponKick(edict_t *ent)
+void P_ClearWeaponRecoil(edict_t *ent)
 {
 	if (!ent->client)
 		return;
 
-	ent->client->machinegun_kick_angles = {};
-	ent->client->machinegun_release_angles = {};
-	ent->client->machinegun_kick_origin = {};
+	ent->client->weapon_kick_angles = {};
+	ent->client->weapon_release_angles = {};
+	ent->client->weapon_kick_origin = {};
+	ent->client->weapon_recoil_time = 0_ms;
 }
 
 void P_ProjectSource(edict_t *ent, const vec3_t &angles, vec3_t distance, vec3_t &result_start, vec3_t &result_dir)
@@ -415,7 +585,7 @@ void ChangeWeapon(edict_t *ent)
 
 	ent->client->pers.weapon = ent->client->newweapon;
 	ent->client->newweapon = nullptr;
-	P_ClearBulletWeaponKick(ent);
+	P_ClearWeaponRecoil(ent);
 
 	// set visible model
 	if (ent->s.modelindex == MODELINDEX_PLAYER)
@@ -1073,10 +1243,11 @@ void weapon_grenade_fire(edict_t *ent, bool held)
 	if (is_quad)
 		damage *= damage_multiplier;
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on grenades
 	// limit upwards angle so you don't throw behind you
-	P_ProjectSource(ent, { max(-62.5f, ent->client->v_angle[0]), ent->client->v_angle[1], ent->client->v_angle[2] }, { 2, 0, -14 }, start, dir);
+	P_ProjectSource(ent, { max(-62.5f, shot_angles[0]), shot_angles[1], shot_angles[2] }, { 2, 0, -14 }, start, dir);
 
 	gtime_t timer = ent->client->grenade_time - level.time;
 	speed = (int) (ent->health <= 0 ? GRENADE_MINSPEED : min(GRENADE_MINSPEED + (GRENADE_TIMER - timer).seconds() * ((GRENADE_MAXSPEED - GRENADE_MINSPEED) / GRENADE_TIMER.seconds()), GRENADE_MAXSPEED));
@@ -1318,12 +1489,11 @@ void weapon_grenadelauncher_fire(edict_t *ent)
 	if (is_quad)
 		damage *= damage_multiplier;
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on grenades
 	// limit upwards angle so you don't fire it behind you
-	P_ProjectSource(ent, { max(-62.5f, ent->client->v_angle[0]), ent->client->v_angle[1], ent->client->v_angle[2] }, { 8, 0, -8 }, start, dir);
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -1.f, 0.f, 0.f });
+	P_ProjectSource(ent, { max(-62.5f, shot_angles[0]), shot_angles[1], shot_angles[2] }, { 8, 0, -8 }, start, dir);
 
 	fire_grenade(ent, start, dir, damage, 600, 2.5_sec, radius, (crandom_open() * 10.0f), (200 + crandom_open() * 10.0f), false);
 
@@ -1368,11 +1538,10 @@ void Weapon_RocketLauncher_Fire(edict_t *ent)
 		radius_damage *= damage_multiplier;
 	}
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, { 8, 8, -8 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 8, 8, -8 }, start, dir);
 	fire_rocket(ent, start, dir, damage, 650, damage_radius, radius_damage);
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -1.f, 0.f, 0.f });
 
 	// send muzzle flash
 	gi.WriteByte(svc_muzzleflash);
@@ -1406,13 +1575,9 @@ void Blaster_Fire(edict_t *ent, const vec3_t &g_offset, int damage, bool hyper, 
 	if (is_quad)
 		damage *= damage_multiplier;
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, vec3_t{ 24, 8, -8 } + g_offset, start, dir);
-
-	if (hyper)
-		P_AddWeaponKick(ent, ent->client->v_forward * -2, { crandom() * 0.7f, crandom() * 0.7f, crandom() * 0.7f });
-	else
-		P_AddWeaponKick(ent, ent->client->v_forward * -2, { -1.f, 0.f, 0.f });
+	P_ProjectSource(ent, shot_angles, vec3_t{ 24, 8, -8 } + g_offset, start, dir);
 
 	// let the regular blaster projectiles travel a bit faster because it is a completely useless gun
 	int speed = hyper ? 1000 : 1500;
@@ -1534,21 +1699,29 @@ MACHINEGUN / CHAINGUN
 ======================================================================
 */
 
-static vec3_t P_ApplyBulletWeaponRecoil(edict_t *ent, float recoil_scale, int shot_increment)
+vec3_t P_ApplyWeaponRecoil(edict_t *ent, int shot_increment)
 {
-	vec3_t shot_kick_origin = {};
-	bullet_weapon_recoil_t recoil = P_GetBulletWeaponRecoil(ent, recoil_scale);
-	vec3_t shot_recoil_delta = P_BuildBulletWeaponRecoilDelta(recoil, shot_increment);
+	if (!ent->client)
+		return {};
 
-	for (int i = 1; i < 3; i++)
-		shot_kick_origin[i] = crandom() * 0.35f * recoil_scale;
-	shot_kick_origin[0] = crandom() * 0.35f * recoil_scale;
+	vec3_t pre_recoil_angles = ent->client->v_angle;
+
+	weapon_recoil_t recoil = P_GetWeaponRecoil(ent);
+	if (recoil.recoil_scale <= 0.f && recoil.release_scale <= 0.f)
+		return pre_recoil_angles;
+
+	vec3_t shot_kick_origin = {};
+	vec3_t shot_recoil_delta = P_BuildWeaponRecoilDelta(recoil, shot_increment);
+
+	for (int i = 0; i < 3; i++)
+		shot_kick_origin[i] = crandom() * 0.35f * recoil.recoil_scale;
 
 	vec3_t applied_recoil_delta = P_ApplyBulletWeaponAimDelta(ent, shot_recoil_delta);
-	ent->client->machinegun_kick_angles += applied_recoil_delta;
-	ent->client->machinegun_release_angles = P_BuildBulletWeaponReleaseDelta(shot_recoil_delta, recoil, shot_increment);
-	ent->client->machinegun_kick_origin = shot_kick_origin;
-	return ent->client->v_angle;
+	ent->client->weapon_kick_angles += applied_recoil_delta;
+	ent->client->weapon_release_angles = P_BuildWeaponReleaseDelta(shot_recoil_delta, recoil, shot_increment);
+	ent->client->weapon_kick_origin = shot_kick_origin;
+	ent->client->weapon_recoil_time = level.time + P_GetWeaponRecoilTime();
+	return pre_recoil_angles;
 }
 
 void Machinegun_Fire(edict_t *ent)
@@ -1580,7 +1753,7 @@ void Machinegun_Fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 
-	vec3_t shot_angles = P_ApplyBulletWeaponRecoil(ent, 1.0f, 1);
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 
 	// get start / end positions
 	vec3_t start, dir;
@@ -1705,7 +1878,7 @@ void Chaingun_Fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 
-	vec3_t shot_angles = P_ApplyBulletWeaponRecoil(ent, 0.5f, shots);
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent, shots);
 
 	vec3_t start, dir;
 	P_ProjectSource(ent, shot_angles, { 0, 0, -8 }, start, dir);
@@ -1756,11 +1929,10 @@ void weapon_shotgun_fire(edict_t *ent)
 	int damage = 4;
 	int kick = 8;
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on hitscan
-	P_ProjectSource(ent, ent->client->v_angle, { 0, 0, -8 }, start, dir);
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -2.f, 0.f, 0.f });
+	P_ProjectSource(ent, shot_angles, { 0, 0, -8 }, start, dir);
 
 	if (is_quad)
 	{
@@ -1805,23 +1977,22 @@ void weapon_supershotgun_fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 	
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on hitscan
-	P_ProjectSource(ent, ent->client->v_angle, { 0, 0, -8 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 0, 0, -8 }, start, dir);
 	G_LagCompensate(ent, start, dir);
 	vec3_t v;
-	v[PITCH] = ent->client->v_angle[PITCH];
-	v[YAW] = ent->client->v_angle[YAW] - 5;
-	v[ROLL] = ent->client->v_angle[ROLL];
+	v[PITCH] = shot_angles[PITCH];
+	v[YAW] = shot_angles[YAW] - 5;
+	v[ROLL] = shot_angles[ROLL];
 	// Paril: kill sideways angle on hitscan
 	P_ProjectSource(ent, v, { 0, 0, -8 }, start, dir);
 	fire_shotgun(ent, start, dir, damage, kick, DEFAULT_SHOTGUN_HSPREAD, DEFAULT_SHOTGUN_VSPREAD, DEFAULT_SSHOTGUN_COUNT / 2, MOD_SSHOTGUN);
-	v[YAW] = ent->client->v_angle[YAW] + 5;
+	v[YAW] = shot_angles[YAW] + 5;
 	P_ProjectSource(ent, v, { 0, 0, -8 }, start, dir);
 	fire_shotgun(ent, start, dir, damage, kick, DEFAULT_SHOTGUN_HSPREAD, DEFAULT_SHOTGUN_VSPREAD, DEFAULT_SSHOTGUN_COUNT / 2, MOD_SSHOTGUN);
 	G_UnLagCompensate();
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -2.f, 0.f, 0.f });
 
 	// send muzzle flash
 	gi.WriteByte(svc_muzzleflash);
@@ -1872,13 +2043,12 @@ void weapon_railgun_fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, { 0, 7, -8 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 0, 7, -8 }, start, dir);
 	G_LagCompensate(ent, start, dir);
 	fire_rail(ent, start, dir, damage, kick);
 	G_UnLagCompensate();
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -3, { -3.f, 0.f, 0.f });
 
 	// send muzzle flash
 	gi.WriteByte(svc_muzzleflash);
@@ -1937,13 +2107,10 @@ void weapon_bfg_fire(edict_t *ent)
 	if (is_quad)
 		damage *= damage_multiplier;
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, { 8, 8, -8 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 8, 8, -8 }, start, dir);
 	fire_bfg(ent, start, dir, damage, 400, damage_radius);
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -20.f, 0, crandom() * 8 });
-	ent->client->kick.total = DAMAGE_TIME();
-	ent->client->kick.time = level.time + ent->client->kick.total;
 
 	// send muzzle flash
 	gi.WriteByte(svc_muzzleflash);
@@ -1968,10 +2135,9 @@ void Weapon_BFG(edict_t *ent)
 
 void weapon_disint_fire(edict_t *self)
 {
+	vec3_t shot_angles = P_ApplyWeaponRecoil(self);
 	vec3_t start, dir;
-	P_ProjectSource(self, self->client->v_angle, { 24, 8, -8 }, start, dir);
-
-	P_AddWeaponKick(self, self->client->v_forward * -2, { -1.f, 0.f, 0.f });
+	P_ProjectSource(self, shot_angles, { 24, 8, -8 }, start, dir);
 
 	fire_disintegrator(self, start, dir, 800);
 

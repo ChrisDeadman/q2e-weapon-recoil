@@ -6,12 +6,11 @@
 
 void weapon_prox_fire(edict_t *ent)
 {
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on grenades
 	// limit upwards angle so you don't fire behind you
-	P_ProjectSource(ent, { max(-62.5f, ent->client->v_angle[0]), ent->client->v_angle[1], ent->client->v_angle[2] }, { 8, 0, -8 }, start, dir);
-
-	P_AddWeaponKick(ent, ent->client->v_forward * -2, { -1.f, 0.f, 0.f });
+	P_ProjectSource(ent, { max(-62.5f, shot_angles[0]), shot_angles[1], shot_angles[2] }, { 8, 0, -8 }, start, dir);
 
 	fire_prox(ent, start, dir, damage_multiplier, 600);
 
@@ -35,10 +34,11 @@ void Weapon_ProxLauncher(edict_t *ent)
 
 void weapon_tesla_fire(edict_t *ent, bool held)
 {
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 	// Paril: kill sideways angle on grenades
 	// limit upwards angle so you don't throw behind you
-	P_ProjectSource(ent, { max(-62.5f, ent->client->v_angle[0]), ent->client->v_angle[1], ent->client->v_angle[2] }, { 0, 0, -22 }, start, dir);
+	P_ProjectSource(ent, { max(-62.5f, shot_angles[0]), shot_angles[1], shot_angles[2] }, { 0, 0, -22 }, start, dir);
 
 	gtime_t timer = ent->client->grenade_time - level.time;
 	int	  speed = (int) (ent->health <= 0 ? GRENADE_MINSPEED : min(GRENADE_MINSPEED + (GRENADE_TIMER - timer).seconds() * ((GRENADE_MAXSPEED - GRENADE_MINSPEED) / GRENADE_TIMER.seconds()), GRENADE_MAXSPEED));
@@ -88,9 +88,10 @@ void weapon_chainfist_fire(edict_t *ent)
 		damage *= damage_multiplier;
 
 	// set start point
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
 
-	P_ProjectSource(ent, ent->client->v_angle, { 0, 0, -4 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 0, 0, -4 }, start, dir);
 
 	if (fire_player_melee(ent, start, dir, CHAINFIST_REACH, damage, 100, MOD_CHAINFIST))
 	{
@@ -196,8 +197,9 @@ void weapon_tracker_fire(edict_t *self)
 	mins = { -16, -16, -16 };
 	maxs = { 16, 16, 16 };
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(self);
 	vec3_t start, dir;
-	P_ProjectSource(self, self->client->v_angle, { 24, 8, -8 }, start, dir);
+	P_ProjectSource(self, shot_angles, { 24, 8, -8 }, start, dir);
 
 	end = start + (dir * 8192);
 	enemy = nullptr;
@@ -231,8 +233,6 @@ void weapon_tracker_fire(edict_t *self)
 			}
 		}
 	}
-
-	P_AddWeaponKick(self, self->client->v_forward * -2, { -1.f, 0.f, 0.f });
 
 	fire_tracker(self, start, dir, damage, 1000, enemy);
 
@@ -299,13 +299,7 @@ void weapon_etf_rifle_fire(edict_t *ent)
 		kick *= damage_multiplier;
 	}
 
-	vec3_t kick_origin {}, kick_angles {};
-	for (i = 0; i < 3; i++)
-	{
-		kick_origin[i] = crandom() * 0.85f;
-		kick_angles[i] = crandom() * 0.85f;
-	}
-	P_AddWeaponKick(ent, kick_origin, kick_angles);
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 
 	// get start / end positions
 	if (ent->client->ps.gunframe == 6)
@@ -314,7 +308,7 @@ void weapon_etf_rifle_fire(edict_t *ent)
 		offset = { 15, 6, -8 };
 
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle + kick_angles, offset, start, dir);
+	P_ProjectSource(ent, shot_angles, offset, start, dir);
 	fire_flechette(ent, start, dir, damage, 1150, kick);
 	Weapon_PowerupSound(ent);
 
@@ -405,8 +399,9 @@ void Heatbeam_Fire(edict_t *ent)
 	ent->client->kick.time = 0_ms;
 
 	// This offset is the "view" offset for the beam start (used by trace)
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, { 7, 2, -3 }, start, dir);
+	P_ProjectSource(ent, shot_angles, { 7, 2, -3 }, start, dir);
 
 	// This offset is the entity offset
 	G_LagCompensate(ent, start, dir);

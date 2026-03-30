@@ -1433,8 +1433,9 @@ void CTFGrappleFire(edict_t *ent, const vec3_t &g_offset, int damage, effects_t 
 	if (ent->client->ctf_grapplestate > CTF_GRAPPLE_STATE_FLY)
 		return; // it's already out
 
+	vec3_t shot_angles = P_ApplyWeaponRecoil(ent);
 	vec3_t start, dir;
-	P_ProjectSource(ent, ent->client->v_angle, vec3_t{ 24, 8, -8 + 2 } + g_offset, start, dir);
+	P_ProjectSource(ent, shot_angles, vec3_t{ 24, 8, -8 + 2 } + g_offset, start, dir);
 
 	if (ent->client->silencer_shots)
 		volume = 0.2f;

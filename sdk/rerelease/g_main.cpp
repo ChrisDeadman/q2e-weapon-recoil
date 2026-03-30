@@ -64,9 +64,7 @@ cvar_t *run_roll;
 cvar_t *bob_up;
 cvar_t *bob_pitch;
 cvar_t *bob_roll;
-cvar_t *g_recoil_vertical;
-cvar_t *g_recoil_horizontal;
-cvar_t *g_recoil_return_time;
+cvar_t *g_recoil_time;
 
 cvar_t *sv_cheats;
 
@@ -305,9 +303,7 @@ void InitGame()
 	bob_up = gi.cvar("bob_up", "0.005", CVAR_NOFLAGS);
 	bob_pitch = gi.cvar("bob_pitch", "0.002", CVAR_NOFLAGS);
 	bob_roll = gi.cvar("bob_roll", "0.002", CVAR_NOFLAGS);
-	g_recoil_vertical = gi.cvar("g_recoil_vertical", "1.5", CVAR_ARCHIVE);
-	g_recoil_horizontal = gi.cvar("g_recoil_horizontal", "0.7", CVAR_ARCHIVE);
-	g_recoil_return_time = gi.cvar("g_recoil_return_time", "0.2", CVAR_ARCHIVE);
+	g_recoil_time = gi.cvar("g_recoil_time", "0.1", CVAR_ARCHIVE);
 
 	// flood control
 	flood_msgs = gi.cvar("flood_msgs", "4", CVAR_NOFLAGS);
