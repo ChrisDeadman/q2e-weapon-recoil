@@ -4,12 +4,41 @@
 #include "g_local.h"
 #include "m_player.h"
 #include "bots/bot_includes.h"
+#include "recoil_model.h"
 
 static edict_t   *current_player;
 static gclient_t *current_client;
 
 static vec3_t forward, right, up;
 float		  xyspeed;
+
+static recoil_model::Angles P_ToRecoilAngles(const vec3_t &angles)
+{
+	return { angles[PITCH], angles[YAW], angles[ROLL] };
+}
+
+static vec3_t P_FromRecoilAngles(const recoil_model::Angles &angles)
+{
+	vec3_t result = {};
+	result[PITCH] = angles.pitch;
+	result[YAW] = angles.yaw;
+	result[ROLL] = angles.roll;
+	return result;
+}
+
+static recoil_model::Origin P_ToRecoilOrigin(const vec3_t &origin)
+{
+	return { origin[0], origin[1], origin[2] };
+}
+
+static vec3_t P_FromRecoilOrigin(const recoil_model::Origin &origin)
+{
+	vec3_t result = {};
+	result[0] = origin.x;
+	result[1] = origin.y;
+	result[2] = origin.z;
+	return result;
+}
 
 float bobmove;
 int	  bobcycle, bobcycle_run;	  // odd cycles are right foot going forward
@@ -51,12 +80,9 @@ inline void P_UpdateWeaponRecoil(edict_t *ent)
 
 	if (!recoil_active)
 	{
-		ent->client->weapon_kick_angles = {};
-
-		float blend = gi.frame_time_s / max(recoil_time, 0.01f);
-		blend = clamp(blend, 0.f, 1.f);
-		ent->client->weapon_release_angles *= (1.f - blend);
-		ent->client->weapon_kick_origin *= (1.f - blend);
+		auto state = recoil_model::DecayInactiveWeaponRecoil(P_ToRecoilAngles(ent->client->weapon_release_angles), P_ToRecoilOrigin(ent->client->weapon_kick_origin), recoil_time, gi.frame_time_s);
+		ent->client->weapon_release_angles = P_FromRecoilAngles(state.release_angles);
+		ent->client->weapon_kick_origin = P_FromRecoilOrigin(state.kick_origin);
 	}
 
 	if (ent->client->weapon_kick_angles.lengthSquared() < 0.0001f)
@@ -446,6 +472,8 @@ void SV_CalcViewOffset(edict_t *ent)
 		for (int i = 0; i < 3; i++)
 			angles[i] = clamp(angles[i], -31.f, 31.f);
 	}
+
+	angles[PITCH] = recoil_model::ClampKickPitch(ent->client->ps.viewangles[PITCH], angles[PITCH]);
 
 	//===================================
 

@@ -303,7 +303,7 @@ void InitGame()
 	bob_up = gi.cvar("bob_up", "0.005", CVAR_NOFLAGS);
 	bob_pitch = gi.cvar("bob_pitch", "0.002", CVAR_NOFLAGS);
 	bob_roll = gi.cvar("bob_roll", "0.002", CVAR_NOFLAGS);
-	g_recoil_time = gi.cvar("g_recoil_time", "0.1", CVAR_ARCHIVE);
+	g_recoil_time = gi.cvar("g_recoil_time", "0.1", CVAR_ARCHIVE | CVAR_SERVERINFO);
 
 	// flood control
 	flood_msgs = gi.cvar("flood_msgs", "4", CVAR_NOFLAGS);

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(Q2EWeaponRecoil LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -39,9 +41,19 @@ set(JSONCPP_WITH_STRICT_ISO OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/fmt EXCLUDE_FROM_ALL)
 add_subdirectory(external/jsoncpp EXCLUDE_FROM_ALL)
 
+add_library(recoil_model STATIC
+    sdk/rerelease/recoil_model.cpp
+)
+
+target_include_directories(recoil_model PUBLIC
+    "${RERELEASE_DIR}"
+)
+
 file(GLOB_RECURSE Q2E_SOURCES CONFIGURE_DEPENDS
     "${RERELEASE_DIR}/*.cpp"
 )
+
+list(REMOVE_ITEM Q2E_SOURCES "${RERELEASE_DIR}/recoil_model.cpp")
 
 add_library(game SHARED ${Q2E_SOURCES})
 
@@ -60,6 +72,7 @@ target_compile_definitions(game PRIVATE
 )
 
 target_link_libraries(game PRIVATE
+    recoil_model
     fmt::fmt
     jsoncpp_static
 )
@@ -103,3 +116,22 @@ add_custom_command(TARGET game POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_SOURCE_DIR}/description.txt" "${DIST_DIR}/description.txt"
     VERBATIM
 )
+
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(external/fmt/test/gtest EXCLUDE_FROM_ALL)
+
+    add_executable(recoil_model_tests
+        tests/recoil_model_tests.cpp
+    )
+
+    target_include_directories(recoil_model_tests PRIVATE
+        "${RERELEASE_DIR}"
+    )
+
+    target_link_libraries(recoil_model_tests PRIVATE
+        recoil_model
+        gtest
+    )
+
+    add_test(NAME recoil_model_tests COMMAND recoil_model_tests)
+endif()

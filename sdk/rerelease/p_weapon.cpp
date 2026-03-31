@@ -4,6 +4,7 @@
 
 #include "g_local.h"
 #include "m_player.h"
+#include "recoil_model.h"
 
 bool is_quad;
 // RAFAEL
@@ -62,6 +63,9 @@ byte P_DamageModifier(edict_t *ent)
 // frames; this is to mimic that visual behavior on any tickrate.
 inline float P_CurrentKickFactor(edict_t *ent)
 {
+	if (ent->client->kick.total <= 0_ms)
+		return 0.f;
+
 	if (ent->client->kick.time < level.time)
 		return 0.f;
 
@@ -80,6 +84,27 @@ vec3_t P_CurrentKickOrigin(edict_t *ent)
 	return ent->client->kick.origin * P_CurrentKickFactor(ent);
 }
 
+namespace
+{
+std::array<cvar_t *, IT_TOTAL> weapon_recoil_scale_cvars = {};
+
+using WeaponRecoil = recoil_model::WeaponRecoil;
+}
+
+static recoil_model::Angles P_ToRecoilAngles(const vec3_t &angles)
+{
+	return { angles[PITCH], angles[YAW], angles[ROLL] };
+}
+
+static vec3_t P_FromRecoilAngles(const recoil_model::Angles &angles)
+{
+	vec3_t result = {};
+	result[PITCH] = angles.pitch;
+	result[YAW] = angles.yaw;
+	result[ROLL] = angles.roll;
+	return result;
+}
+
 static float P_SignedAngle(float angle)
 {
 	angle = anglemod(angle);
@@ -88,91 +113,21 @@ static float P_SignedAngle(float angle)
 	return angle;
 }
 
-namespace
-{
-constexpr float WEAPON_RECOIL_VERTICAL = 1.5f;
-constexpr float WEAPON_RECOIL_HORIZONTAL = 0.7f;
-constexpr float WEAPON_RECOIL_YAW_RELEASE_SCALE = 1.5f;
-constexpr float WEAPON_RECOIL_PITCH_RELEASE_SCALE = 3.0f;
-
-std::array<cvar_t *, IT_TOTAL> weapon_recoil_scale_cvars = {};
-}
-
 static gtime_t P_GetWeaponRecoilTime()
 {
 	return gtime_t::from_sec(max(g_recoil_time ? g_recoil_time->value : 0.1f, 0.f));
 }
 
-struct weapon_recoil_t
-{
-	float recoil_scale;
-	float release_scale;
-	float pitch_sign;
-};
-
 struct weapon_recoil_id_default_t
 {
 	item_id_t id;
-	weapon_recoil_t recoil;
+	WeaponRecoil recoil;
 };
 
-struct weapon_recoil_name_default_t
-{
-	const char *pattern;
-	weapon_recoil_t recoil;
-};
-
+// ID-based overrides for weapons whose classname-derived suffix doesn't
+// match the canonical name table (e.g. hand grenades vs grenade launcher).
 static constexpr weapon_recoil_id_default_t weapon_recoil_id_defaults[] = {
-	{ IT_WEAPON_GRAPPLE, { 0.0f, 0.0f, -1.0f } },
-	{ IT_WEAPON_BLASTER, { 0.6f, 0.6f, -1.0f } },
-	{ IT_WEAPON_CHAINFIST, { 0.6f, 0.9f, 1.0f } },
-	{ IT_WEAPON_SHOTGUN, { 1.8f, 1.8f, -1.0f } },
-	{ IT_WEAPON_SSHOTGUN, { 2.4f, 2.4f, -1.0f } },
-	{ IT_WEAPON_MACHINEGUN, { 1.0f, 1.0f, -1.0f } },
-	{ IT_WEAPON_CHAINGUN, { 0.5f, 1.0f, 1.0f } },
-	{ IT_WEAPON_ETF_RIFLE, { 1.2f, 1.2f, -1.0f } },
-	{ IT_AMMO_GRENADES, { 1.6f, 1.6f, -1.0f } },
-	{ IT_WEAPON_GLAUNCHER, { 2.1f, 2.1f, -1.0f } },
-	{ IT_WEAPON_RLAUNCHER, { 2.5f, 2.5f, -1.0f } },
-	{ IT_WEAPON_PROXLAUNCHER, { 2.1f, 2.1f, -1.0f } },
-	{ IT_WEAPON_HYPERBLASTER, { 0.55f, 0.55f, -1.0f } },
-	{ IT_WEAPON_IONRIPPER, { 1.4f, 1.4f, -1.0f } },
-	{ IT_WEAPON_PLASMABEAM, { 0.35f, 0.35f, -1.0f } },
-	{ IT_WEAPON_RAILGUN, { 2.8f, 2.8f, -1.0f } },
-	{ IT_WEAPON_PHALANX, { 2.2f, 2.2f, -1.0f } },
-	{ IT_WEAPON_BFG, { 8.0f, 8.0f, -1.0f } },
-	{ IT_WEAPON_DISRUPTOR, { 1.9f, 1.9f, -1.0f } },
-	{ IT_AMMO_TESLA, { 0.8f, 0.8f, -1.0f } },
-	{ IT_AMMO_TRAP, { 0.8f, 0.8f, -1.0f } },
-};
-
-static constexpr weapon_recoil_name_default_t weapon_recoil_name_defaults[] = {
-	{ "grapple", { 0.0f, 0.0f, -1.0f } },
-	{ "chainfist", { 0.6f, 0.9f, 1.0f } },
-	{ "chainsaw", { 0.6f, 0.9f, 1.0f } },
-	{ "chaingun", { 0.5f, 1.0f, 1.0f } },
-	{ "supershotgun", { 2.4f, 2.4f, -1.0f } },
-	{ "shotgun", { 1.8f, 1.8f, -1.0f } },
-	{ "bfg", { 8.0f, 8.0f, -1.0f } },
-	{ "rail", { 2.8f, 2.8f, -1.0f } },
-	{ "rocket", { 2.5f, 2.5f, -1.0f } },
-	{ "grenade", { 2.1f, 2.1f, -1.0f } },
-	{ "prox", { 2.1f, 2.1f, -1.0f } },
-	{ "phalanx", { 2.2f, 2.2f, -1.0f } },
-	{ "disruptor", { 1.9f, 1.9f, -1.0f } },
-	{ "tracker", { 1.9f, 1.9f, -1.0f } },
-	{ "disintegrator", { 1.9f, 1.9f, -1.0f } },
-	{ "ionripper", { 1.4f, 1.4f, -1.0f } },
-	{ "ripper", { 1.4f, 1.4f, -1.0f } },
-	{ "plasmabeam", { 0.35f, 0.35f, -1.0f } },
-	{ "heatbeam", { 0.35f, 0.35f, -1.0f } },
-	{ "beam", { 0.35f, 0.35f, -1.0f } },
-	{ "hyperblaster", { 0.55f, 0.55f, -1.0f } },
-	{ "blaster", { 0.6f, 0.6f, -1.0f } },
-	{ "etf", { 1.2f, 1.2f, -1.0f } },
-	{ "flechette", { 1.2f, 1.2f, -1.0f } },
-	{ "tesla", { 0.8f, 0.8f, -1.0f } },
-	{ "trap", { 0.8f, 0.8f, -1.0f } },
+	{ IT_AMMO_GRENADES, { 1.5f, 1.5f, -1.f } },
 };
 
 static std::string P_GetWeaponRecoilSuffix(const gitem_t *weapon)
@@ -224,21 +179,10 @@ static std::string P_GetWeaponRecoilSuffix(const gitem_t *weapon)
 	return sanitized;
 }
 
-static weapon_recoil_t P_GetFallbackWeaponRecoil(const std::string &suffix)
-{
-	for (const auto &entry : weapon_recoil_name_defaults)
-	{
-		if (suffix.find(entry.pattern) != std::string::npos)
-			return entry.recoil;
-	}
-
-	return { 1.0f, 1.0f, -1.0f };
-}
-
-static weapon_recoil_t P_GetWeaponRecoilDefaults(const gitem_t *weapon)
+static WeaponRecoil P_GetWeaponRecoilDefaults(const gitem_t *weapon)
 {
 	if (!weapon)
-		return { 1.0f, 1.0f, -1.0f };
+		return {};
 
 	for (const auto &entry : weapon_recoil_id_defaults)
 	{
@@ -246,7 +190,7 @@ static weapon_recoil_t P_GetWeaponRecoilDefaults(const gitem_t *weapon)
 			return entry.recoil;
 	}
 
-	return P_GetFallbackWeaponRecoil(P_GetWeaponRecoilSuffix(weapon));
+	return recoil_model::FindWeaponRecoilDefaults(P_GetWeaponRecoilSuffix(weapon).c_str());
 }
 
 static cvar_t *P_GetWeaponRecoilScaleCvar(const gitem_t *weapon, float default_scale)
@@ -258,7 +202,7 @@ static cvar_t *P_GetWeaponRecoilScaleCvar(const gitem_t *weapon, float default_s
 		return weapon_recoil_scale_cvars[weapon->id];
 
 	std::string cvar_name(G_Fmt("g_recoil_{}", P_GetWeaponRecoilSuffix(weapon)));
-	cvar_t *cvar = gi.cvar(cvar_name.c_str(), G_Fmt("{}", default_scale).data(), CVAR_ARCHIVE);
+	cvar_t *cvar = gi.cvar(cvar_name.c_str(), G_Fmt("{}", default_scale).data(), CVAR_ARCHIVE | CVAR_SERVERINFO);
 
 	if (weapon->id > IT_NULL && weapon->id < IT_TOTAL)
 		weapon_recoil_scale_cvars[weapon->id] = cvar;
@@ -266,9 +210,9 @@ static cvar_t *P_GetWeaponRecoilScaleCvar(const gitem_t *weapon, float default_s
 	return cvar;
 }
 
-static weapon_recoil_t P_GetWeaponRecoil(edict_t *ent)
+static WeaponRecoil P_GetWeaponRecoil(edict_t *ent)
 {
-	weapon_recoil_t recoil = P_GetWeaponRecoilDefaults(ent && ent->client ? ent->client->pers.weapon : nullptr);
+	WeaponRecoil recoil = P_GetWeaponRecoilDefaults(ent && ent->client ? ent->client->pers.weapon : nullptr);
 	cvar_t *cvar = P_GetWeaponRecoilScaleCvar(ent && ent->client ? ent->client->pers.weapon : nullptr, recoil.recoil_scale);
 	if (!cvar)
 		return recoil;
@@ -283,22 +227,14 @@ static weapon_recoil_t P_GetWeaponRecoil(edict_t *ent)
 	return recoil;
 }
 
-static vec3_t P_BuildWeaponRecoilDelta(const weapon_recoil_t &recoil, int shot_increment)
+static vec3_t P_BuildWeaponRecoilDelta(const WeaponRecoil &recoil, int shot_increment)
 {
-	vec3_t shot_recoil_delta = {};
-	shot_recoil_delta[YAW] = crandom() * WEAPON_RECOIL_HORIZONTAL * recoil.recoil_scale;
-	shot_recoil_delta[PITCH] = recoil.pitch_sign * WEAPON_RECOIL_VERTICAL * recoil.recoil_scale * max(shot_increment, 1);
-	return shot_recoil_delta;
+	return P_FromRecoilAngles(recoil_model::BuildWeaponShotDelta(recoil, shot_increment, crandom()));
 }
 
-static vec3_t P_BuildWeaponReleaseDelta(const vec3_t &shot_recoil_delta, const weapon_recoil_t &recoil, int shot_increment)
+static vec3_t P_BuildWeaponReleaseDelta(const vec3_t &shot_recoil_delta, const WeaponRecoil &recoil, int shot_increment)
 {
-	vec3_t release_delta = shot_recoil_delta;
-	if (recoil.recoil_scale > 0.f)
-		release_delta[YAW] *= (WEAPON_RECOIL_YAW_RELEASE_SCALE * recoil.release_scale) / recoil.recoil_scale;
-	if (recoil.recoil_scale > 0.f && shot_increment > 0)
-		release_delta[PITCH] *= (WEAPON_RECOIL_PITCH_RELEASE_SCALE * recoil.release_scale) / (recoil.recoil_scale * shot_increment);
-	return release_delta;
+	return P_FromRecoilAngles(recoil_model::BuildWeaponReleaseDelta(P_ToRecoilAngles(shot_recoil_delta), recoil.recoil_scale, recoil.release_scale, shot_increment));
 }
 
 vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles)
@@ -309,7 +245,7 @@ vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles)
 		return applied_delta;
 
 	float old_pitch = P_SignedAngle(ent->client->v_angle[PITCH]);
-	float new_pitch = clamp(old_pitch + delta_angles[PITCH], -89.f, 89.f);
+	float new_pitch = clamp(old_pitch + delta_angles[PITCH], -recoil_model::kMaxPitch, recoil_model::kMaxPitch);
 	applied_delta[PITCH] = new_pitch - old_pitch;
 	applied_delta[YAW] = delta_angles[YAW];
 
@@ -1706,7 +1642,7 @@ vec3_t P_ApplyWeaponRecoil(edict_t *ent, int shot_increment)
 
 	vec3_t pre_recoil_angles = ent->client->v_angle;
 
-	weapon_recoil_t recoil = P_GetWeaponRecoil(ent);
+	WeaponRecoil recoil = P_GetWeaponRecoil(ent);
 	if (recoil.recoil_scale <= 0.f && recoil.release_scale <= 0.f)
 		return pre_recoil_angles;
 
@@ -1719,8 +1655,10 @@ vec3_t P_ApplyWeaponRecoil(edict_t *ent, int shot_increment)
 	vec3_t applied_recoil_delta = P_ApplyBulletWeaponAimDelta(ent, shot_recoil_delta);
 	ent->client->weapon_kick_angles += applied_recoil_delta;
 	ent->client->weapon_release_angles = P_BuildWeaponReleaseDelta(shot_recoil_delta, recoil, shot_increment);
+
+	gtime_t recoil_time = P_GetWeaponRecoilTime();
 	ent->client->weapon_kick_origin = shot_kick_origin;
-	ent->client->weapon_recoil_time = level.time + P_GetWeaponRecoilTime();
+	ent->client->weapon_recoil_time = level.time + recoil_time;
 	return pre_recoil_angles;
 }
 

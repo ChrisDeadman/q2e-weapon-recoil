@@ -2344,7 +2344,6 @@ void fire_trap(edict_t *self, const vec3_t &start, const vec3_t &aimdir, int spe
 void fire_disintegrator(edict_t *self, const vec3_t &start, const vec3_t &dir, int speed);
 vec3_t P_CurrentKickAngles(edict_t *ent);
 vec3_t P_CurrentKickOrigin(edict_t *ent);
-vec3_t P_ApplyBulletWeaponAimDelta(edict_t *ent, const vec3_t &delta_angles);
 vec3_t P_ApplyWeaponRecoil(edict_t *ent, int shot_increment = 1);
 void P_ClearWeaponRecoil(edict_t *ent);
 
