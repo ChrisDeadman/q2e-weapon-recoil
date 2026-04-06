@@ -1,6 +1,6 @@
 # q2e-weapon-recoil
 
-Punchier, configurable weapon recoil for Quake II rerelease that makes the whole arsenal feel sharper.
+Weapons recoil for Quake II Remastered. Adds recoil to all weapons to make them feel punchier and more fun to shoot. Recoil is configurable per weapon.
 
 ## What It Does
 
